@@ -1,0 +1,7 @@
+﻿# Excel data files (contain personal revenue data)
+*.xlsx
+*.xls
+test/
+
+# Windows
+*.ps1-e
