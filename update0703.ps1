@@ -1,12 +1,57 @@
-$ErrorActionPreference="Stop"
-$c1=[char]0x81F4+[char]0x77E5+[char]0x8BA1+[char]0x5212+[char]0x5185+[char]0x5BB9+[char]0x6536+[char]0x76CA
-$c2=[char]0x81F4+[char]0x77E5+[char]0x6536+[char]0x76CA
-$srcPath="G:\me\"+$c2+"\2025\"+$c1+".xls"
-$dstPath="G:\me\"+$c2+"\2025\test\2607.xlsx"
+﻿$ErrorActionPreference="Stop"
 
+# === Configuration ===
+$dataDir="G:\me\致知收益\2025"
+
+# === Auto-detect source data file (match "致知计划内容收益" + any suffix) ===
+$sourceFile=Get-ChildItem -Path $dataDir -File|Where-Object{$_.BaseName-match"致知计划内容收益"}|Select-Object -First 1 -ExpandProperty FullName
+if(-not$sourceFile){throw "Source data file not found in $dataDir"}
+
+# === Determine target workbook by date ===
+$today=Get-Date
+if($today.Day -ge 3){$targetMonth=$today.Month;$targetYear=$today.Year
+}else{$targetMonth=$today.Month-1;$targetYear=$today.Year;if($targetMonth-eq0){$targetMonth=12;$targetYear--}}
+$yearPrefix=$targetYear.ToString().Substring(2);$targetFile=Join-Path $dataDir "$($yearPrefix)$($targetMonth.ToString('00')).xlsx"
+
+# === Helper: copy last 2 numeric sheets to new file, break links on first ===
+function CreateNewMonthFile($ex,$srcWb,$newPath){
+ $sheets=@()
+ for($i=1;$i-le$srcWb.Sheets.Count;$i++){$sn=$srcWb.Sheets($i).Name;if($sn-match"^\d{4}$"){$sheets+=@{N=$sn}}}
+ $sorted=$sheets|Sort-Object {$_.N};if($sorted.Count-lt2){return $false}
+ $s1=$sorted[-2].N;$s2=$sorted[-1].N
+ $srcS1=$srcWb.Sheets($s1);$sr=$srcS1.UsedRange;$s1Rows=$sr.Rows.Count;$s1Cols=$sr.Columns.Count;$s1Data=$sr.Value2
+ $newWb=$ex.Workbooks.Add()
+ $srcWb.Sheets($s1).Copy([Type]::Missing,$newWb.Sheets($newWb.Sheets.Count))
+ $ns1=$newWb.Sheets($newWb.Sheets.Count)
+ $dr=$ns1.Range($ns1.Cells(1,1),$ns1.Cells($s1Rows,$s1Cols));$dr.Value2=$s1Data
+ $srcWb.Sheets($s2).Copy([Type]::Missing,$newWb.Sheets($newWb.Sheets.Count))
+ $newWb.Sheets(1).Delete()
+ # Remove external workbook refs from s2 formulas (e.g. '[2607.xlsx]0701'! -> '0701'!)
+ $ns2=$newWb.Sheets($s2);$ur=$ns2.UsedRange;$fa=$ur.Formula;$srcName=[System.IO.Path]::GetFileName($srcWb.FullName)
+ for($ri=1;$ri-le$ur.Rows.Count;$ri++){for($ci=1;$ci-le$ur.Columns.Count;$ci++){
+  $fv=$fa[$ri,$ci];if($fv-is[string]-and$fv.StartsWith("=")){$fa[$ri,$ci]=$fv-replace[regex]::Escape("[$srcName]"),""}
+ }}
+ $ur.Formula=$fa
+ $newWb.SaveAs($newPath,51);$newWb.Close()
+ Write-Output "Created $newPath ($s1, $s2, links broken)";return $true
+}
+
+# === Ensure target file exists ===
+if(-not(Test-Path $targetFile)){
+ $prevMonth=$targetMonth-1;$prevYear=$targetYear
+ if($prevMonth-eq0){$prevMonth=12;$prevYear--}
+ $prevPrefix=$prevYear.ToString().Substring(2);$prevFile=Join-Path $dataDir "$($prevPrefix)$($prevMonth.ToString('00')).xlsx"
+ if(-not(Test-Path $prevFile)){throw "Previous file $prevFile not found"}
+ $ex=New-Object -ComObject Excel.Application
+ $ex.Visible=$false;$ex.DisplayAlerts=$false;$ex.ScreenUpdating=$false;$ex.EnableEvents=$false
+ $pv=$ex.Workbooks.Open($prevFile)
+ CreateNewMonthFile $ex $pv $targetFile
+ $pv.Saved=$true;$pv.Close();$ex.Quit()
+}
+
+# === Levenshtein distance ===
 function Levenshtein($s,$t){
- $m=$s.Length;$n=$t.Length;$w=$n+1
- $d=[int[]]::new(($m+1)*$w)
+ $m=$s.Length;$n=$t.Length;$w=$n+1;$d=[int[]]::new(($m+1)*$w)
  for($i=0;$i-le$m;$i++){$d[$i*$w+0]=$i}
  for($j=0;$j-le$n;$j++){$d[0*$w+$j]=$j}
  for($j=1;$j-le$n;$j++){for($i=1;$i-le$m;$i++){
@@ -19,15 +64,15 @@ function Levenshtein($s,$t){
 function FuzzyRatio($s,$t){
  if([string]::IsNullOrEmpty($s)-or[string]::IsNullOrEmpty($t)){return 0}
  $d=Levenshtein $s $t;$max=[Math]::Max($s.Length,$t.Length)
- if($max-eq0){return 1}
- return 1-$d/$max
+ if($max-eq0){return 1};return 1-$d/$max
 }
 
+# === Main: open Excel ===
 $ex=New-Object -ComObject Excel.Application
 $ex.Visible=$false;$ex.DisplayAlerts=$false;$ex.ScreenUpdating=$false;$ex.EnableEvents=$false
 
-# Read source .xls
-$wb=$ex.Workbooks.Open($srcPath)
+# === Read source data ===
+$wb=$ex.Workbooks.Open($sourceFile)
 $s=$wb.Sheets(1);$sr=$s.UsedRange.Rows.Count;$raw=$s.UsedRange.Value2
 $h1=$raw[1,1];$h2=$raw[1,2];$h3=$raw[1,3];$h4=$raw[1,4];$h5=$raw[1,5];$h6=$raw[1,6];$h7=$raw[1,7]
 $data=@()
@@ -41,34 +86,30 @@ for($ri=2;$ri-le$sr;$ri++){
 $wb.Saved=$true;$wb.Close()
 Write-Output ($data.Count.ToString()+" source rows")
 
-# Open destination
-$w=$ex.Workbooks.Open($dstPath)
+# === Open target workbook ===
+$w=$ex.Workbooks.Open($targetFile)
 
-# Find prev sheet (numeric name, highest)
+# === Find prev sheet + today ===
 $maxS=0;$prev=""
 for($i=1;$i-le$w.Sheets.Count;$i++){
  $sn=$w.Sheets($i).Name;if($sn-match"^\d{4}$"-and[int]$sn-gt$maxS){$maxS=[int]$sn;$prev=$sn}
 }
 $today="{0:D4}"-f($maxS+1)
-Write-Output ("prev=$prev today=$today")
+Write-Output ("file=$(Split-Path $targetFile -Leaf) prev=$prev today=$today")
 
-# Delete if exists
+# === Create new sheet ===
 try{$d=$w.Sheets($today);$d.Delete()}catch{}
-
-# Create new sheet
 $n=$w.Worksheets.Add()
 $n.Name=$today;$n.Move([Type]::Missing,$w.Sheets($w.Sheets.Count))
 
-# Headers (fixed labels matching 2505 structure)
+# === Headers ===
 $qd=[string][char]0x524D+[string][char]0x65E5
-$h10=$qd+[string][char]0x5DEE
-$h11=[string][char]0x6536+[string][char]0x76CA+[string][char]0x5DEE
-$h12="L"+$today
-$h13=$qd+"M";$h14=$qd+"N";$h15=$qd+"O"
+$h10=$qd+[string][char]0x5DEE;$h11=[string][char]0x6536+[string][char]0x76CA+[string][char]0x5DEE
+$h12="L"+$today;$h13=$qd+"M";$h14=$qd+"N";$h15=$qd+"O"
 $hh=@($h1,$h2,$h3,$h4,$h5,$h6,$h7,"E/D","G/F",$h10,$h11,$h12,$h13,$h14,$h15)
 for($xi=0;$xi-lt$hh.Count;$xi++){$n.Cells.Item(1,$xi+1)=$hh[$xi]}
 
-# Read prev sheet for matching + row references
+# === Read prev sheet ===
 $p=$w.Sheets($prev);$pr=$p.UsedRange.Rows.Count;$pRaw=$p.UsedRange.Value2
 $exactA=@{};$byB=@{};$byC=@{};$allP=@()
 for($pi=2;$pi-le$pr;$pi++){
@@ -79,9 +120,9 @@ for($pi=2;$pi-le$pr;$pi++){
  if(!$byC.ContainsKey($ct)){$byC[$ct]=@()};$byC[$ct]+=@{R=$pi;B=$bt;Q=$q}
  $allP+=@{R=$pi;Q=$q;B=$bt;C=$ct}
 }
-$msg="prev sheet ${prev}: $($allP.Count) questions, $pr rows";Write-Output $msg
+Write-Output ("prev sheet ${prev}: $($allP.Count) questions, $pr rows")
 
-# Match each source row to prev sheet (3-layer)
+# === 3-layer matching ===
 $eCnt=0;$fCnt=0;$bCnt=0;$cCnt=0;$nCnt=0;$matchRow=@()
 foreach($item in $data){
  $q=$item.Q;$b=$item.T;$c=$item.Dt
@@ -105,19 +146,17 @@ foreach($item in $data){
 }
 Write-Output ("match: ${eCnt}exact ${fCnt}fuzzy ${bCnt}B ${cCnt}C ${nCnt}new")
 
-# Pass 1: write A-G values + MNO text
+# === Pass 1: write A-G + MNO ===
 for($di=0;$di-lt$data.Count;$di++){
  $rr=$di+2;$item=$data[$di];$mr=$matchRow[$di]
  $n.Cells.Item($rr,1)=$item.Q;$n.Cells.Item($rr,2)=$item.T;$n.Cells.Item($rr,3)=$item.Dt
  $n.Cells.Item($rr,4)=$item.A;$n.Cells.Item($rr,5)=$item.B;$n.Cells.Item($rr,6)=$item.C;$n.Cells.Item($rr,7)=$item.Gv
-  if($mr-ne$null){
-   $n.Cells.Item($rr,13)=$pRaw[$mr,13]
-   $n.Cells.Item($rr,14)=$pRaw[$mr,14]
-   $n.Cells.Item($rr,15)=$pRaw[$mr,15]
-  }else{$n.Cells.Item($rr,13)="";$n.Cells.Item($rr,14)="";$n.Cells.Item($rr,15)=""}
+ if($mr-ne$null){
+  $n.Cells.Item($rr,13)=$pRaw[$mr,13];$n.Cells.Item($rr,14)=$pRaw[$mr,14];$n.Cells.Item($rr,15)=$pRaw[$mr,15]
+ }else{$n.Cells.Item($rr,13)="";$n.Cells.Item($rr,14)="";$n.Cells.Item($rr,15)=""}
 }
 
-# Pass 2: write H-L formulas (matching 2505 VLOOKUP pattern) via bulk range
+# === Pass 2: write H-L formulas via bulk range ===
 $lastRow=$data.Count+1
 $hArr=New-Object object[] $data.Count
 $iArr=New-Object object[] $data.Count
@@ -138,13 +177,22 @@ $n.Range("J2:J${lastRow}").Formula=$jArr
 $n.Range("K2:K${lastRow}").Formula=$kArr
 $n.Range("L2:L${lastRow}").Formula=$lArr
 
-# Sum row
+# === Sum row ===
 $sumRow=$data.Count+2
 $n.Cells.Item($sumRow,10)=[string][char]0x5408+[string][char]0x8BA1
 $n.Cells.Item($sumRow,11).Formula="=ROUND(SUM(K2:K$($sumRow-1)),2)"
 
+# === Save ===
 $ex.ScreenUpdating=$true;$ex.ScreenUpdating=$false
-$w.Save()
-Write-Output "Save OK"
+$w.Save();Write-Output "Save OK"
+
+# === On the 2nd: create new monthly file ===
+if($today.Day -eq 2){
+ $nextMonth=$today.Month;$nextYear=$today.Year
+ $nextPrefix=$nextYear.ToString().Substring(2)
+ $nextFile=Join-Path $dataDir "$($nextPrefix)$($nextMonth.ToString('00')).xlsx"
+ if(-not(Test-Path $nextFile)){CreateNewMonthFile $ex $w $nextFile}
+}
+
 $w.Close();$ex.Quit()
 Write-Output "=== Done ==="
