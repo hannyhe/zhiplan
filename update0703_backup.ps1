@@ -4,8 +4,8 @@
 $dataDir="G:\me\致知收益\2025"
 
 # === Auto-detect source data file (match "致知计划内容收益" + any suffix) ===
-$sourceFile=Get-ChildItem -Path $dataDir -File|Where-Object{$_.BaseName-match"致知计划内容收益"-and$_.CreationTime.Date-eq(Get-Date).Date}|Select-Object -First 1 -ExpandProperty FullName
-if(-not$sourceFile){throw "No source data file generated today found in $dataDir"}
+$sourceFile=Get-ChildItem -Path $dataDir -File|Where-Object{$_.BaseName-match"致知计划内容收益"}|Select-Object -First 1 -ExpandProperty FullName
+if(-not$sourceFile){throw "Source data file not found in $dataDir"}
 
 # === Determine target workbook by date ===
 $today=Get-Date
@@ -167,8 +167,8 @@ for($di=0;$di-lt$data.Count;$di++){
  $rr=$di+2
  $hArr[$di]="=ROUND(E${rr}/D${rr},2)"
  $iArr[$di]="=ROUND(G${rr}/F${rr},2)"
- $jArr[$di]="=F${rr}-IFERROR(VLOOKUP(`$A${rr},'${prev}'!`$A`$1:G${pr},6,FALSE),F${rr}-D${rr})"
- $kArr[$di]="=G${rr}-IFERROR(VLOOKUP(`$A${rr},'${prev}'!`$A`$1:H${pr},7,FALSE),G${rr}-E${rr})"
+ $jArr[$di]="=F${rr}-IFERROR(VLOOKUP(`$A${rr},'${prev}'!`$A`$1:G${pr},6,FALSE),IFERROR(VLOOKUP(`$C${rr},'${prev}'!`$C`$1:G${pr},4,FALSE),F${rr}-D${rr}))"
+ $kArr[$di]="=G${rr}-IFERROR(VLOOKUP(`$A${rr},'${prev}'!`$A`$1:H${pr},7,FALSE),IFERROR(VLOOKUP(`$C${rr},'${prev}'!`$C`$1:H${pr},5,FALSE),G${rr}-E${rr}))"
  $lArr[$di]="=IFERROR(ROUND(K${rr}/J${rr},2),)"
 }
 $n.Range("H2:H${lastRow}").Formula=$hArr
