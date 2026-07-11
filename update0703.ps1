@@ -185,11 +185,13 @@ $jArr=New-Object object[] $data.Count
 $kArr=New-Object object[] $data.Count
 $lArr=New-Object object[] $data.Count
 for($di=0;$di-lt$data.Count;$di++){
- $rr=$di+2
+ $rr=$di+2;$mr=$matchRow[$di]
  $hArr[$di]="=ROUND(E${rr}/D${rr},2)"
  $iArr[$di]="=ROUND(G${rr}/F${rr},2)"
- $jArr[$di]="=F${rr}-IFERROR(VLOOKUP(`$A${rr},'${prev}'!`$A`$1:G${pr},6,FALSE),F${rr}-D${rr})"
- $kArr[$di]="=G${rr}-IFERROR(VLOOKUP(`$A${rr},'${prev}'!`$A`$1:H${pr},7,FALSE),G${rr}-E${rr})"
+ $refJ=if($mr-ne$null){"'${prev}'!F${mr}"}else{"NA()"}
+ $refK=if($mr-ne$null){"'${prev}'!G${mr}"}else{"NA()"}
+ $jArr[$di]="=F${rr}-IFERROR(${refJ},F${rr}-D${rr})"
+ $kArr[$di]="=G${rr}-IFERROR(${refK},G${rr}-E${rr})"
  $lArr[$di]="=IFERROR(ROUND(K${rr}/J${rr},2),)"
 }
 $n.Range("H2:H${lastRow}").Formula=$hArr
