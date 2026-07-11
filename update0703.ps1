@@ -66,6 +66,20 @@ function FuzzyRatio($s,$t){
  $d=Levenshtein $s $t;$max=[Math]::Max($s.Length,$t.Length)
  if($max-eq0){return 1};return 1-$d/$max
 }
+# Normalize: strip zero-width chars, replace non-CJK non-ASCII with ?, collapse consecutive ?
+function NormalizeTitle($s){
+ if([string]::IsNullOrEmpty($s)){return $s}
+ $sb=New-Object System.Text.StringBuilder;$prevQ=$false
+ foreach($ch in $s.ToCharArray()){
+  $c=[int]$ch
+  if($c-eq0x200B-or$c-eq0x200C-or$c-eq0x200D-or$c-eq0xFEFF-or$c-eq0x00AD){continue}
+  if($c-ge0xD800-and$c-le0xDFFF){if(!$prevQ){[void]$sb.Append('?');$prevQ=$true};continue}
+  if($c-eq0x3F){if(!$prevQ){[void]$sb.Append('?');$prevQ=$true};continue}
+  $keep=($c-ge0x20-and$c-le0x7E)-or($c-ge0x3000-and$c-le0x303F)-or($c-ge0x4E00-and$c-le0x9FFF)-or($c-ge0xFF01-and$c-le0xFF5E)-or$c-eq0x2014-or$c-eq0x2018-or$c-eq0x2019-or$c-eq0x201C-or$c-eq0x201D-or$c-eq0x2026
+  if($keep){[void]$sb.Append($ch);$prevQ=$false}else{if(!$prevQ){[void]$sb.Append('?');$prevQ=$true}}
+ }
+ return $sb.ToString().TrimEnd('?')
+}
 
 # === Main: open Excel ===
 $ex=New-Object -ComObject Excel.Application
@@ -77,7 +91,7 @@ $s=$wb.Sheets(1);$sr=$s.UsedRange.Rows.Count;$raw=$s.UsedRange.Value2
 $h1=$raw[1,1];$h2=$raw[1,2];$h3=$raw[1,3];$h4=$raw[1,4];$h5=$raw[1,5];$h6=$raw[1,6];$h7=$raw[1,7]
 $data=@()
 for($ri=2;$ri-le$sr;$ri++){
- $q=[string]$raw[$ri,1];if([string]::IsNullOrWhiteSpace($q)){continue}
+ $q=NormalizeTitle([string]$raw[$ri,1]);if([string]::IsNullOrWhiteSpace($q)){continue}
  $tp=[string]$raw[$ri,2];$dv=$raw[$ri,3]
  if($dv-ne$null){if($dv.GetType().Name-eq"Double"){$ds=[datetime]::FromOADate([double]$dv).ToString("yyyy/M/d")}else{$ds=$dv.ToString()}}else{$ds=""}
  $va1=[double]($raw[$ri,4]);$va2=[double]($raw[$ri,5]);$va3=0;try{$va3=[double]($raw[$ri,6])}catch{};$va4=0;try{$va4=[double]($raw[$ri,7])}catch{}
@@ -113,7 +127,7 @@ for($xi=0;$xi-lt$hh.Count;$xi++){$n.Cells.Item(1,$xi+1)=$hh[$xi]}
 $p=$w.Sheets($prev);$pr=$p.UsedRange.Rows.Count;$pRaw=$p.UsedRange.Value2
 $exactA=@{};$byB=@{};$byC=@{};$allP=@()
 for($pi=2;$pi-le$pr;$pi++){
- $q=[string]$pRaw[$pi,1];if([string]::IsNullOrWhiteSpace($q)){continue}
+ $q=NormalizeTitle([string]$pRaw[$pi,1]);if([string]::IsNullOrWhiteSpace($q)){continue}
  $bt=[string]$pRaw[$pi,2];$ct=[string]$pRaw[$pi,3]
  $exactA[$q]=$pi
  if(!$byB.ContainsKey($bt)){$byB[$bt]=@()};$byB[$bt]+=@{R=$pi;C=$ct;Q=$q}
@@ -121,6 +135,13 @@ for($pi=2;$pi-le$pr;$pi++){
  $allP+=@{R=$pi;Q=$q;B=$bt;C=$ct}
 }
 Write-Output ("prev sheet ${prev}: $($allP.Count) questions, $pr rows")
+# Normalize prev sheet A column for VLOOKUP compatibility
+$normCount=0
+for($pi=2;$pi-le$pr;$pi++){
+ $ov=[string]$pRaw[$pi,1];$nv=NormalizeTitle $ov
+ if($nv-ne$ov-and![string]::IsNullOrWhiteSpace($nv)){$p.Cells.Item($pi,1).Value2=$nv;$normCount++}
+}
+if($normCount-gt0){Write-Output "normalized $normCount titles in ${prev}"}
 
 # === 3-layer matching ===
 $eCnt=0;$fCnt=0;$bCnt=0;$cCnt=0;$nCnt=0;$matchRow=@()
